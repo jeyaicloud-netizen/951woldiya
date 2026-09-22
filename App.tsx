@@ -2,55 +2,52 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Contact, CallLog, SimConfig, ActiveCallState } from './types';
 import { initialContacts, initialCallLogs, defaultSettings } from './initialData';
 import { playKeypadTone, triggerHaptic, playCallEndTone } from './audio';
-import SearchHeader from './components/SearchHeader';
-import CallHistoryList from './components/CallHistoryList';
-import DialpadSheet from './components/DialpadSheet';
-import SimSelectionDialog from './components/SimSelectionDialog';
-import InCallScreen from './components/InCallScreen';
-import NavigationDrawer from './components/NavigationDrawer';
-import NewContactModal from './components/NewContactModal';
-import ContactsModal from './components/ContactsModal';
-import SettingsModal from './components/SettingsModal';
-import HelpModal from './components/HelpModal';
-import BottomNavBar from './components/BottomNavBar';
-import { playEndCallTone, triggerHaptic } from './utils/audio';
+import StatusBar from './StatusBar';
+import SearchHeader from './SearchHeader';
+import CallHistoryList from './CallHistoryList';
+import BottomNavBar from './BottomNavBar';
+import DialpadSheet from './DialpadSheet';
+import InCallScreen from './InCallScreen';
+import SimSelectionDialog from './SimSelectionDialog';
+import NavigationDrawer from './NavigationDrawer';
+import ContactsModal from './ContactsModal';
+import NewContactModal from './NewContactModal';
+import SettingsModal from './SettingsModal';
+import HelpModal from './HelpModal';
 
-export default function App() {
-  // State: Contacts, Call Logs, SIMs
+export function App() {
   const [contacts, setContacts] = useState<Contact[]>(() => {
     try {
       const saved = localStorage.getItem('phone_app_contacts');
-      return saved ? JSON.parse(saved) : INITIAL_CONTACTS;
+      return saved ? JSON.parse(saved) : initialContacts;
     } catch {
-      return INITIAL_CONTACTS;
+      return initialContacts;
     }
   });
 
   const [callLogs, setCallLogs] = useState<CallLog[]>(() => {
     try {
       const saved = localStorage.getItem('phone_app_call_logs');
-      return saved ? JSON.parse(saved) : INITIAL_CALL_LOGS;
+      return saved ? JSON.parse(saved) : initialCallLogs;
     } catch {
-      return INITIAL_CALL_LOGS;
+      return initialCallLogs;
     }
   });
 
   const [sims, setSims] = useState<SimConfig[]>(() => {
     try {
       const saved = localStorage.getItem('phone_app_sims');
-      return saved ? JSON.parse(saved) : INITIAL_SIMS;
+      return saved ? JSON.parse(saved) : defaultSettings.sims;
     } catch {
-      return INITIAL_SIMS;
+      return defaultSettings.sims;
     }
   });
 
-  // Navigation & View tabs
-  const [currentTab, setCurrentTab] = useState<'home' | 'keypad'>('home');
+  const [currentTab, setCurrentTab] = useState<'recents' | 'contacts'>('recents');
   const [dialpadDigits, setDialpadDigits] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Missed'>('All');
 
-  // Modals & Sheets
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [isNewContactModalOpen, setIsNewContactModalOpen] = useState(false);
@@ -58,370 +55,312 @@ export default function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
-  // Settings
   const [showStatusBar, setShowStatusBar] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
 
-  // Active Calling
   const [pendingCall, setPendingCall] = useState<{ number: string; name?: string } | null>(null);
   const [isSimDialogOpen, setIsSimDialogOpen] = useState(false);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
-  const callTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const callTimerRef = useRef<any>(null);
 
-  // Persist contacts, call logs, sims to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('phone_app_contacts', JSON.stringify(contacts));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [contacts]);
 
   useEffect(() => {
     try {
       localStorage.setItem('phone_app_call_logs', JSON.stringify(callLogs));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [callLogs]);
 
   useEffect(() => {
     try {
       localStorage.setItem('phone_app_sims', JSON.stringify(sims));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [sims]);
 
-  // Active call duration timer
   useEffect(() => {
     if (activeCall && activeCall.status === 'connected') {
       callTimerRef.current = setInterval(() => {
-        setActiveCall((prev) => (prev ? { ...prev, seconds: prev.seconds + 1 } : null));
+        setActiveCall(prev => prev ? { ...prev, duration: prev.duration + 1 } : null);
       }, 1000);
     } else {
       if (callTimerRef.current) {
         clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
       }
     }
     return () => {
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
-      }
+      if (callTimerRef.current) clearInterval(callTimerRef.current);
     };
   }, [activeCall?.status]);
 
-  // Handle Call Initiation (Opens SIM Dialog - Screenshot 3)
   const handleInitiateCall = (number: string, name?: string) => {
     if (!number.trim()) return;
-    setPendingCall({ number: number.trim(), name: name?.trim() });
-    setIsSimDialogOpen(true);
-  };
+    if (soundEnabled) playKeypadTone(5);
+    if (vibrationEnabled) triggerHaptic();
 
-  // Handle SIM Selection & Start Call
-  const handleSelectSim = (simId: number) => {
-    if (!pendingCall) return;
-    const selectedSim = sims.find((s) => s.id === simId) || sims[0];
-    setIsSimDialogOpen(false);
-
-    if (vibrationEnabled) triggerHaptic(25);
-
-    // Create call state
-    const newCall: ActiveCallState = {
-      number: pendingCall.number,
-      name: pendingCall.name,
-      carrier: selectedSim.name,
-      status: 'calling',
-      seconds: 0,
-      isMuted: false,
-      isSpeaker: false,
-      isRecording: true, // Auto-recording enabled as seen in screenshots with red dot
-      recordingSavedToast: false,
-      inCallKeypadOpen: false,
-      simId,
-    };
-    setActiveCall(newCall);
-
-    // Save outgoing call to call history
-    const newLog: CallLog = {
-      id: 'log_' + Date.now(),
-      number: pendingCall.number,
-      name: pendingCall.name,
-      direction: 'outgoing',
-      timestamp: 'Just now',
-      timeAgo: 'Just now',
-      dateGroup: 'Today',
-      carrier: selectedSim.name,
-      hasRecording: true,
-    };
-
-    setCallLogs((prev) => [newLog, ...prev]);
-
-    // Simulate connection after 1.8 seconds
-    setTimeout(() => {
-      setActiveCall((prev) => (prev ? { ...prev, status: 'connected' } : null));
-    }, 1800);
-
-    setPendingCall(null);
-  };
-
-  // Handle End Call
-  const handleEndCall = () => {
-    if (!activeCall) return;
-    if (soundEnabled) playEndCallTone();
-    if (vibrationEnabled) triggerHaptic(30);
-
-    const wasRecording = activeCall.isRecording;
-
-    if (wasRecording) {
-      // Show "Recording saved." toast for 2.5 seconds (Screenshot 8)
-      setActiveCall((prev) =>
-        prev ? { ...prev, recordingSavedToast: true, status: 'ended' } : null
-      );
-      setTimeout(() => {
-        setActiveCall(null);
-      }, 2400);
+    const activeSims = sims.filter(s => s.active);
+    if (activeSims.length > 1) {
+      setPendingCall({ number, name });
+      setIsSimDialogOpen(true);
     } else {
-      setActiveCall(null);
+      startCall(number, name, activeSims[0]?.id || 1);
     }
   };
 
-  // In-call toggles
+  const startCall = (number: string, name: string | undefined, simId: 1 | 2) => {
+    setIsSimDialogOpen(false);
+    setPendingCall(null);
+
+    const contact = contacts.find(c => c.phoneNumber.replace(/\s+/g, '') === number.replace(/\s+/g, ''));
+    const displayName = name || (contact ? contact.name : number);
+
+    const newCallLog: CallLog = {
+      id: Date.now().toString(),
+      contactName: contact ? contact.name : undefined,
+      phoneNumber: number,
+      type: 'outgoing',
+      timestamp: 'Just now',
+      simSlot: simId,
+      duration: '0s'
+    };
+    setCallLogs(prev => [newCallLog, ...prev]);
+
+    setActiveCall({
+      contactName: displayName,
+      phoneNumber: number,
+      simSlot: simId,
+      status: 'connecting',
+      duration: 0,
+      isMuted: false,
+      isSpeakerOn: false,
+      isRecording: false,
+      isKeypadOpen: false
+    });
+
+    setTimeout(() => {
+      setActiveCall(prev => prev ? { ...prev, status: 'ringing' } : null);
+    }, 1500);
+
+    setTimeout(() => {
+      setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
+    }, 4000);
+  };
+
+  const handleEndCall = () => {
+    if (soundEnabled) playCallEndTone();
+    if (vibrationEnabled) triggerHaptic();
+
+    if (activeCall) {
+      const durSec = activeCall.duration;
+      const durStr = durSec > 60 ? `${Math.floor(durSec / 60)}m ${durSec % 60}s` : `${durSec}s`;
+      setCallLogs(prev => prev.map((log, idx) => idx === 0 ? { ...log, duration: durStr } : log));
+    }
+    setActiveCall(null);
+  };
+
   const handleToggleMute = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
+    setActiveCall(prev => prev ? { ...prev, isMuted: !prev.isMuted } : null);
   };
 
   const handleToggleSpeaker = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => (prev ? { ...prev, isSpeaker: !prev.isSpeaker } : null));
+    setActiveCall(prev => prev ? { ...prev, isSpeakerOn: !prev.isSpeakerOn } : null);
   };
 
   const handleToggleRecord = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => {
-      if (!prev) return null;
-      const willBeRecording = !prev.isRecording;
-      return {
-        ...prev,
-        isRecording: willBeRecording,
-        recordingSavedToast: !willBeRecording, // show toast when stopped
-      };
-    });
-
-    // Auto-dismiss toast
-    setTimeout(() => {
-      setActiveCall((prev) => (prev ? { ...prev, recordingSavedToast: false } : null));
-    }, 2400);
+    setActiveCall(prev => prev ? { ...prev, isRecording: !prev.isRecording } : null);
   };
 
   const handleToggleInCallKeypad = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) =>
-      prev ? { ...prev, inCallKeypadOpen: !prev.inCallKeypadOpen } : null
-    );
+    setActiveCall(prev => prev ? { ...prev, isKeypadOpen: !prev.isKeypadOpen } : null);
   };
 
-  // Contacts management
-  const handleSaveNewContact = (newContact: Omit<Contact, 'id'>) => {
-    const contact: Contact = {
-      ...newContact,
-      id: 'c_' + Date.now(),
-    };
-    setContacts((prev) => [contact, ...prev]);
+  const handleSaveNewContact = (newContact: Contact) => {
+    setContacts(prev => [...prev, newContact]);
+    setIsNewContactModalOpen(false);
   };
 
   const handleDeleteContact = (id: string) => {
-    setContacts((prev) => prev.filter((c) => c.id !== id));
+    setContacts(prev => prev.filter(c => c.id !== id));
   };
 
   const handleDeleteLog = (id: string) => {
-    setCallLogs((prev) => prev.filter((l) => l.id !== id));
+    setCallLogs(prev => prev.filter(l => l.id !== id));
   };
 
   const handleClearCallHistory = () => {
-    if (confirm('Clear all call history?')) {
-      setCallLogs([]);
-    }
+    setCallLogs([]);
   };
 
   const handleResetData = () => {
-    setContacts(INITIAL_CONTACTS);
-    setCallLogs(INITIAL_CALL_LOGS);
-    setSims(INITIAL_SIMS);
-    localStorage.removeItem('phone_app_contacts');
-    localStorage.removeItem('phone_app_call_logs');
-    localStorage.removeItem('phone_app_sims');
+    setContacts(initialContacts);
+    setCallLogs(initialCallLogs);
+    setSims(defaultSettings.sims);
+    localStorage.clear();
   };
 
-  const handleOpenCreateContactWithNumber = (num: string) => {
-    setNewContactInitialNumber(num);
+  const handleOpenCreateContact = (number?: string) => {
+    setNewContactInitialNumber(number || dialpadDigits);
     setIsNewContactModalOpen(true);
   };
 
-  // Filtered Call Logs
-  const filteredCallLogs = useMemo(() => {
-    return callLogs.filter((log) => {
-      // Filter by category chip
-      if (activeFilter === 'Missed' && log.direction !== 'missed') return false;
-      if (activeFilter === 'Contacts') {
-        const hasContact = contacts.some(
-          (c) => c.number === log.number || c.name === log.name
-        );
-        if (!hasContact) return false;
-      }
-      if (activeFilter === 'Spam') return false; // none by default
-
-      // Filter by search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesNumber = log.number.includes(q);
-        const matchesName = log.name?.toLowerCase().includes(q);
-        if (!matchesNumber && !matchesName) return false;
-      }
-
-      return true;
-    });
-  }, [callLogs, contacts, activeFilter, searchQuery]);
+  const filteredLogs = useMemo(() => {
+    let logs = callLogs;
+    if (activeFilter === 'Missed') {
+      logs = logs.filter(l => l.type === 'missed');
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      logs = logs.filter(l => 
+        (l.contactName && l.contactName.toLowerCase().includes(q)) ||
+        l.phoneNumber.includes(q)
+      );
+    }
+    return logs;
+  }, [callLogs, activeFilter, searchQuery]);
 
   return (
-    <div className="w-full min-h-screen bg-[#EAE8F2] flex items-center justify-center font-sans md:py-3 select-none">
-      {/* Phone container: full width/height in mobile & WebView, responsive frame on desktop */}
-      <div className="w-full h-full min-h-[100dvh] md:h-[92vh] md:max-w-[430px] md:rounded-[42px] bg-[#F2F1F6] flex flex-col justify-between relative overflow-hidden shadow-2xl md:border-[7px] md:border-[#222129]">
+    <div id="phone-app-container" className="flex justify-center items-center min-h-screen bg-slate-900 text-slate-800 font-sans p-0 sm:p-4 select-none">
+      <div id="phone-app-device" className="relative w-full max-w-[430px] h-[100dvh] sm:h-[880px] bg-[#f8f9fa] sm:rounded-[36px] shadow-2xl overflow-hidden flex flex-col border sm:border-slate-800">
         
-        {/* Status Bar (Toggleable for native Android WebView) */}
         {showStatusBar && (
-          <StatusBar onToggleSettings={() => setIsSettingsModalOpen(true)} />
-        )}
-
-        {/* Top Header with Search and Filter Chips (Visible on Home tab) */}
-        {currentTab === 'home' && (
-          <SearchHeader
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            activeFilter={activeFilter}
-            onSelectFilter={setActiveFilter}
-            onOpenDrawer={() => setIsDrawerOpen(true)}
+          <StatusBar 
+            sims={sims} 
+            activeCallStatus={activeCall?.status} 
+            callDuration={activeCall?.duration} 
           />
         )}
 
-        {/* Main Content View */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
-          {currentTab === 'home' ? (
-            /* Home Tab: Recent Call History */
-            <CallHistoryList
-              callLogs={filteredCallLogs}
-              contacts={contacts}
-              onStartCall={handleInitiateCall}
-              onOpenContacts={() => setIsContactsModalOpen(true)}
-              onDeleteLog={handleDeleteLog}
-              onCreateContactFromNumber={handleOpenCreateContactWithNumber}
-            />
-          ) : (
-            /* Keypad Tab: Suggested or Dialed display + Dialpad */
-            <DialpadSheet
-              digits={dialpadDigits}
-              onDigitsChange={setDialpadDigits}
-              contacts={contacts}
-              onInitiateCall={handleInitiateCall}
-              onCreateNewContact={handleOpenCreateContactWithNumber}
-              soundEnabled={soundEnabled}
-              vibrationEnabled={vibrationEnabled}
-            />
-          )}
+        <SearchHeader 
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          onOpenDrawer={() => setIsDrawerOpen(true)}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenHelp={() => setIsHelpModalOpen(true)}
+        />
+
+        <div className="flex-1 overflow-y-auto pb-24">
+          <CallHistoryList 
+            logs={filteredLogs}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            onCallContact={(number, name) => handleInitiateCall(number, name)}
+            onDeleteLog={handleDeleteLog}
+            onAddContact={(num) => handleOpenCreateContact(num)}
+            onClearAll={handleClearCallHistory}
+          />
         </div>
 
-        {/* Bottom Navigation Bar */}
-        <BottomNavBar
+        <DialpadSheet 
+          digits={dialpadDigits}
+          setDigits={setDialpadDigits}
+          onCall={(number) => handleInitiateCall(number)}
+          soundEnabled={soundEnabled}
+          vibrationEnabled={vibrationEnabled}
+          onCreateContact={() => handleOpenCreateContact(dialpadDigits)}
+        />
+
+        <BottomNavBar 
           currentTab={currentTab}
-          onTabChange={(tab) => {
-            if (vibrationEnabled) triggerHaptic(10);
-            setCurrentTab(tab);
-          }}
+          setCurrentTab={setCurrentTab}
+          onOpenContacts={() => setIsContactsModalOpen(true)}
+          onOpenKeypad={() => {}}
         />
 
-        {/* Dual SIM Selector Dialog - Screenshot 3 */}
-        <SimSelectionDialog
-          isOpen={isSimDialogOpen}
-          onClose={() => setIsSimDialogOpen(false)}
-          onSelectSim={handleSelectSim}
-          sims={sims}
-          targetNumber={pendingCall?.number || ''}
-          targetName={pendingCall?.name}
-        />
-
-        {/* Fullscreen In-Call View - Screenshots 4, 5, 6, 8 */}
         {activeCall && (
-          <InCallScreen
+          <InCallScreen 
             call={activeCall}
+            sims={sims}
             onEndCall={handleEndCall}
             onToggleMute={handleToggleMute}
             onToggleSpeaker={handleToggleSpeaker}
             onToggleRecord={handleToggleRecord}
-            onToggleInCallKeypad={handleToggleInCallKeypad}
+            onToggleKeypad={handleToggleInCallKeypad}
             soundEnabled={soundEnabled}
             vibrationEnabled={vibrationEnabled}
           />
         )}
 
-        {/* Navigation Drawer - Screenshot 10 */}
-        <NavigationDrawer
+        {isSimDialogOpen && pendingCall && (
+          <SimSelectionDialog 
+            sims={sims}
+            number={pendingCall.number}
+            name={pendingCall.name}
+            onSelectSim={(simId) => startCall(pendingCall.number, pendingCall.name, simId)}
+            onClose={() => {
+              setIsSimDialogOpen(false);
+              setPendingCall(null);
+            }}
+          />
+        )}
+
+        <NavigationDrawer 
           isOpen={isDrawerOpen}
           onClose={() => setIsDrawerOpen(false)}
-          onOpenContacts={() => setIsContactsModalOpen(true)}
-          onOpenSettings={() => setIsSettingsModalOpen(true)}
-          onClearCallHistory={handleClearCallHistory}
-          onOpenHelp={() => setIsHelpModalOpen(true)}
-        />
-
-        {/* New Contact Creation Modal */}
-        <NewContactModal
-          isOpen={isNewContactModalOpen}
-          initialNumber={newContactInitialNumber}
-          onClose={() => {
-            setIsNewContactModalOpen(false);
-            setNewContactInitialNumber('');
+          onOpenSettings={() => {
+            setIsDrawerOpen(false);
+            setIsSettingsModalOpen(true);
           }}
-          onSave={handleSaveNewContact}
+          onOpenHelp={() => {
+            setIsDrawerOpen(false);
+            setIsHelpModalOpen(true);
+          }}
+          onOpenContacts={() => {
+            setIsDrawerOpen(false);
+            setIsContactsModalOpen(true);
+          }}
+          onResetData={() => {
+            setIsDrawerOpen(false);
+            handleResetData();
+          }}
         />
 
-        {/* Contacts Explorer Modal */}
-        <ContactsModal
+        <ContactsModal 
           isOpen={isContactsModalOpen}
           onClose={() => setIsContactsModalOpen(false)}
           contacts={contacts}
-          onStartCall={handleInitiateCall}
-          onOpenCreateContact={() => {
-            setNewContactInitialNumber('');
-            setIsNewContactModalOpen(true);
+          onCallContact={(number, name) => {
+            setIsContactsModalOpen(false);
+            handleInitiateCall(number, name);
+          }}
+          onAddNewContact={() => {
+            setIsContactsModalOpen(false);
+            handleOpenCreateContact();
           }}
           onDeleteContact={handleDeleteContact}
         />
 
-        {/* Settings Modal */}
-        <SettingsModal
-          isOpen={isSettingsModalOpen}
-          onClose={() => setIsSettingsModalOpen(false)}
-          showStatusBar={showStatusBar}
-          onToggleStatusBar={setShowStatusBar}
-          soundEnabled={soundEnabled}
-          onToggleSound={setSoundEnabled}
-          vibrationEnabled={vibrationEnabled}
-          onToggleVibration={setVibrationEnabled}
-          sims={sims}
-          onUpdateSims={setSims}
-          onResetData={handleResetData}
+        <NewContactModal 
+          isOpen={isNewContactModalOpen}
+          onClose={() => setIsNewContactModalOpen(false)}
+          initialNumber={newContactInitialNumber}
+          onSave={handleSaveNewContact}
         />
 
-        {/* Help & Android WebView / Vercel Guidance Modal */}
-        <HelpModal
+        <SettingsModal 
+          isOpen={isSettingsModalOpen}
+          onClose={() => setIsSettingsModalOpen(false)}
+          sims={sims}
+          setSims={setSims}
+          showStatusBar={showStatusBar}
+          setShowStatusBar={setShowStatusBar}
+          soundEnabled={soundEnabled}
+          setSoundEnabled={setSoundEnabled}
+          vibrationEnabled={vibrationEnabled}
+          setVibrationEnabled={setVibrationEnabled}
+        />
+
+        <HelpModal 
           isOpen={isHelpModalOpen}
           onClose={() => setIsHelpModalOpen(false)}
         />
+
       </div>
     </div>
   );
 }
+
+export default App;
